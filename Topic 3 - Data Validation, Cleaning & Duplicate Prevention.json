@@ -1,0 +1,317 @@
+{
+  "name": "Topic 3 - Data Validation, Cleaning & Duplicate Prevention",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        16,
+        0
+      ],
+      "id": "382ff424-b6e5-4620-89fd-028fa386b933",
+      "name": "Manual_Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn [\n  {\n    json: {\n      leadId: \"LD-001\",\n      rawEmail: \" SARAH.CONNOR@SKYNET-RESIST.ORG \",\n      rawPhone: \"+1 (555) 234-5678\",\n      company: \"Skynet Research\",\n      source: \"Webinar_2026_Q4\"\n    }\n  },\n  {\n    json: {\n      leadId: \"LD-002\",\n      rawEmail: \"invalid-email-address\",\n      rawPhone: \"123\",\n      company: \"Broken Data Ltd\",\n      source: \"Import_CSV\"\n    }\n  },\n  {\n    json: {\n      leadId: \"LD-003\",\n      rawEmail: \"spammer99@mailinator.com\",\n      rawPhone: \"15559876543\",\n      company: \"Ghost Inc\",\n      source: \"Scraped_List\"\n    }\n  },\n  {\n    json: {\n      leadId: \"LD-004\",\n      rawEmail: \"sarah.connor@skynet-resist.org\",\n      rawPhone: \"555-234-5678\",\n      company: \"Skynet Research\",\n      source: \"Contact_Us_Form\"\n    }\n  },\n  {\n    json: {\n      leadId: \"LD-005\",\n      rawEmail: \"marcus.wright@cyberdyne.example\",\n      rawPhone: \"+44 20 7946 0919\",\n      company: \"Cyberdyne Systems\",\n      source: \"Website_Form\"\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        0
+      ],
+      "id": "70cfdd3b-2bd5-4861-af8a-9d042f3b39d7",
+      "name": "Code_SimulateDirtyLeads"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst item = $input.item.json;\n\n// Clean email: remove extra spaces and lowercase it.\nconst cleanEmail = String(item.rawEmail || \"\")\n  .trim()\n  .toLowerCase();\n\n// Keep digits only for phone normalization.\nconst digits = String(item.rawPhone || \"\")\n  .replace(/\\D/g, \"\");\n\nlet cleanPhone = null;\n\n// Assumption: 10-digit numbers are US/Canada-style numbers.\nif (digits.length === 10) {\n  cleanPhone = `+1${digits}`;\n} else if (digits.length === 11 && digits.startsWith(\"1\")) {\n  cleanPhone = `+${digits}`;\n} else if (\n  String(item.rawPhone || \"\").trim().startsWith(\"+\") &&\n  digits.length >= 8 &&\n  digits.length <= 15\n) {\n  cleanPhone = `+${digits}`;\n}\n\nreturn {\n  json: {\n    ...item,\n    cleanEmail,\n    cleanPhone\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        0
+      ],
+      "id": "799bd6e9-1316-47b6-aa16-3ca8d140ea24",
+      "name": "Code_SanitizeAndFormat"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst item = $input.item.json;\n\nconst disposableDomains = [\n  \"mailinator.com\",\n  \"tempmail.com\",\n  \"10minutemail.com\",\n  \"throwaway.io\"\n];\n\nconst errors = [];\n\n// Basic email structure validation.\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n\nif (!item.cleanEmail || !emailRegex.test(item.cleanEmail)) {\n  errors.push(\"INVALID_EMAIL_SYNTAX\");\n} else {\n  const domain = item.cleanEmail.split(\"@\")[1].toLowerCase();\n\n  if (disposableDomains.includes(domain)) {\n    errors.push(\"DISPOSABLE_EMAIL_DOMAIN_REJECTED\");\n  }\n}\n\n// Ensure a phone number was normalized.\nif (!item.cleanPhone) {\n  errors.push(\"INVALID_OR_MISSING_E164_PHONE\");\n}\n\nreturn {\n  json: {\n    ...item,\n    isQualityLead: errors.length === 0,\n    validationErrors: errors\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        -80
+      ],
+      "id": "ebcaba6e-3da5-496c-88c3-4793b4f0cf6f",
+      "name": "Code_ValidateLeadQuality"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "bc78e584-b189-49bf-b542-d5a4dc687740",
+              "leftValue": "={{ $json.isQualityLead }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        640,
+        0
+      ],
+      "id": "19bf35b3-a345-4426-b223-26760f49cf77",
+      "name": "IF_IsQualityLead"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst item = $input.item.json;\n\nreturn {\n  json: {\n    quarantineStatus: \"REJECTED_DEFECTIVE_INPUT\",\n    leadId: item.leadId,\n    email: item.cleanEmail,\n    errors: item.validationErrors,\n    lead: item,\n    rejectedAt: new Date().toISOString()\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        96
+      ],
+      "id": "d048059e-fcd4-4e66-b439-3a25a9f4a6d9",
+      "name": "Log_DefectiveLeadQuarantine"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\nconst seenFingerprints = new Set();\n\nreturn items.map((inputItem) => {\n  const item = inputItem.json;\n\n  // Create a fingerprint using normalized email and phone.\n  const fingerprint = `${item.cleanEmail}|${item.cleanPhone}`;\n\n  const isDuplicate = seenFingerprints.has(fingerprint);\n\n  if (!isDuplicate) {\n    seenFingerprints.add(fingerprint);\n  }\n\n  return {\n    json: {\n      ...item,\n      leadFingerprint: fingerprint,\n      isDuplicate\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        -96
+      ],
+      "id": "17221af5-6333-4112-99b4-3880c14be640",
+      "name": "Code_DeduplicateLeads"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "83233456-3573-45a4-92e7-a33e90103d50",
+              "leftValue": "={{ $json.isDuplicate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": "={{ false }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1088,
+        -96
+      ],
+      "id": "3d330cb4-071a-42c3-86a6-12cbd63039ae",
+      "name": "IF_IsUniqueLead"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst item = $input.item.json;\n\nreturn {\n  json: {\n    quarantineStatus: \"BYPASSED_DUPLICATE_LEAD\",\n    leadId: item.leadId,\n    email: item.cleanEmail,\n    leadFingerprint: item.leadFingerprint,\n    quarantinedAt: new Date().toISOString()\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        0
+      ],
+      "id": "e6a2e5c5-c9ff-45b4-9d84-1f6c74fde34d",
+      "name": "Log_DuplicateQuarantine"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dummyjson.com/c/3f05-d94e-4a57-a8c0",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=\n{\n  \"leadId\": \"{{ $json.leadId }}\",\n  \"leadFingerprint\": \"{{ $json.leadFingerprint }}\",\n  \"email\": \"{{ $json.cleanEmail }}\",\n  \"phone\": \"{{ $json.cleanPhone }}\",\n  \"company\": \"{{ $json.company }}\",\n  \"leadSource\": \"{{ $json.source }}\",\n  \"ingestedAt\": \"{{ $now.toISO() }}\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1312,
+        -144
+      ],
+      "id": "526a9921-1234-4726-9028-d3d8247ce682",
+      "name": "HTTP_PostCleanLeadToCRM",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn [\n  {\n    json: {\n      pipelineSummary: \"CLEAN_LEADS_INGESTED\",\n      uniqueLeadsPushed: items.length,\n      executionTime: new Date().toISOString()\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1536,
+        -144
+      ],
+      "id": "87e7cd3f-e84d-45d1-9cba-2d8e135bb258",
+      "name": "Code_PipelineMetrics"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual_Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code_SimulateDirtyLeads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_SimulateDirtyLeads": {
+      "main": [
+        [
+          {
+            "node": "Code_SanitizeAndFormat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_SanitizeAndFormat": {
+      "main": [
+        [
+          {
+            "node": "Code_ValidateLeadQuality",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_ValidateLeadQuality": {
+      "main": [
+        [
+          {
+            "node": "IF_IsQualityLead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_IsQualityLead": {
+      "main": [
+        [
+          {
+            "node": "Code_DeduplicateLeads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log_DefectiveLeadQuarantine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_DeduplicateLeads": {
+      "main": [
+        [
+          {
+            "node": "IF_IsUniqueLead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_IsUniqueLead": {
+      "main": [
+        [
+          {
+            "node": "HTTP_PostCleanLeadToCRM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log_DuplicateQuarantine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_PostCleanLeadToCRM": {
+      "main": [
+        [
+          {
+            "node": "Code_PipelineMetrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "c604c4db-189a-4efa-ab37-b059a576510e",
+  "meta": {
+    "instanceId": "a03c7678428ef19ededbf912f16f7d5798ec7b9ab4c17f2a2def6a9e791e7215"
+  },
+  "nodeGroups": [],
+  "id": "oFNwnRpuhpqtkBDL",
+  "tags": []
+}
